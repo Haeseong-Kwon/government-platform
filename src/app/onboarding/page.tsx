@@ -123,7 +123,12 @@ export default function OnboardingPage() {
             <li key={item.title} className="flex-1">
               <div className={cn("h-1.5 rounded-full", index <= step ? "bg-[#2563EB]" : "bg-[#E2E8F0]")} />
               <p className={cn("mt-2 text-xs font-bold", index <= step ? "text-[#2563EB]" : "text-[#94A3B8]")}>
-                {index < step ? <Check size={12} className="mr-1 inline" /> : `${index + 1}. `}{item.title}
+                {/* 번호와 체크 아이콘이 자리를 맞바꾸는 지점입니다. 번역 확장이 이 글자를 가져가면
+                    React가 지울 노드를 못 찾아 화면이 죽어, 번역 대상에서 빼고 자체 칸에 둡니다. */}
+                <span translate="no" className="mr-1">
+                  {index < step ? <Check size={12} className="inline" /> : `${index + 1}.`}
+                </span>
+                {item.title}
               </p>
             </li>
           ))}

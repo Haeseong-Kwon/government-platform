@@ -2,6 +2,11 @@
 
 import { usePathname } from "next/navigation";
 import { Footer } from "./Footer";
+import { installTranslationDomGuard } from "@/lib/domGuard";
+
+// 모든 화면이 이 컴포넌트를 거치므로, 번역 확장이 DOM을 흔들어도 죽지 않도록 여기서 한 번만 막습니다.
+// 서버 렌더링 중에는 Node가 없어 그냥 지나갑니다.
+if (typeof Node !== "undefined") installTranslationDomGuard(Node.prototype);
 
 /**
  * 워크스페이스와 인증 화면은 자체 헤더를 갖습니다.
