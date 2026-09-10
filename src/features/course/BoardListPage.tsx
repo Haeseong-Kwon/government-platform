@@ -27,10 +27,12 @@ import {
   STUDENT_STATUS_TONE,
   TEAM_STATUS_LABEL,
   countOpenRoles,
+  assignmentFileName,
   courseHref,
   rosterFileName,
   sortNotices,
   sortQuestions,
+  toAssignmentCsv,
   toRosterCsv,
   formatBytes,
   formatDateTime,
@@ -391,6 +393,16 @@ function GuideBlock({
  * 확정은 "이 명단으로 간다"는 선언입니다 — 확정하면 번호가 붙고, 그 팀은 학생이
  * 더 고칠 수 없습니다(026 정책). 그래서 내보내기도 확정된 팀만 담습니다.
  */
+function downloadCsv(content: string, fileName: string) {
+  // BOM(\uFEFF)이 없으면 엑셀이 UTF-8로 못 읽어 한글이 전부 깨집니다.
+  const url = URL.createObjectURL(new Blob([`\uFEFF${content}`], { type: "text/csv;charset=utf-8;" }));
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
 function RosterTools({ teams, onChanged }: { teams: CourseTeam[]; onChanged: () => void }) {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
@@ -414,17 +426,6 @@ function RosterTools({ teams, onChanged }: { teams: CourseTeam[]; onChanged: () 
     }
   };
 
-  const download = () => {
-    // BOM(\uFEFF)이 없으면 엑셀이 UTF-8로 못 읽어 한글이 전부 깨집니다.
-    const blob = new Blob([`\uFEFF${toRosterCsv(confirmed)}`], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = rosterFileName();
-    anchor.click();
-    URL.revokeObjectURL(url);
-  };
-
   return (
     <section className="mb-6 rounded-2xl border border-[#E2E8F0] bg-white p-5">
       <h2 className="text-base font-bold">팀 명단 관리</h2>
@@ -443,7 +444,7 @@ function RosterTools({ teams, onChanged }: { teams: CourseTeam[]; onChanged: () 
         >
           미확정 {pending.length}개 모두 확정
         </Button>
-        <Button variant="secondary" icon={<Download size={15} />} disabled={confirmed.length === 0} onClick={download}>
+        <Button variant="secondary" icon={<Download size={15} />} disabled={confirmed.length === 0} onClick={() => downloadCsv(toRosterCsv(confirmed), rosterFileName())}>
           확정 팀 명단 내려받기
         </Button>
       </div>
@@ -451,6 +452,58 @@ function RosterTools({ teams, onChanged }: { teams: CourseTeam[]; onChanged: () 
       <p className="mt-3 text-xs leading-5 text-[#94A3B8]">
         파일에는 팀번호·팀명·팀원이름·역할·학과·학번·비고(팀장/팀원)가 들어갑니다.
         CSV 형식이라 엑셀에서 그대로 열립니다.
+      </p>
+
+      {note && <Notice tone="error" className="mt-3" onDismiss={() => setNote(null)}>{note}</Notice>}
+    </section>
+  );
+}
+
+/**
+ * 기업 제안 게시판의 운영진 도구.
+ *
+ * 배정 자체는 각 제안 글에서 합니다 — 목록에서 제안마다 팀을 고르게 하면
+ * 학생이 읽는 게시판이 배정 표가 됩니다. 여기서는 학기 전체 현황과 파일만 봅니다.
+ */
+function ProposalTools({ proposals }: { proposals: Proposal[] }) {
+  const [teams, setTeams] = useState<CourseTeam[] | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    getTeams()
+      .then((rows) => { if (mounted) setTeams(rows); })
+      .catch((reason) => { if (mounted) setNote(toMessage(reason, "팀 목록을 불러오지 못했습니다.")); });
+    return () => { mounted = false; };
+  }, []);
+
+  const assigned = (teams ?? []).filter((team) => team.proposalId !== null);
+  const withoutTeam = proposals.filter((proposal) => !assigned.some((team) => team.proposalId === proposal.id));
+
+  return (
+    <section className="mb-6 rounded-2xl border border-[#E2E8F0] bg-white p-5">
+      <h2 className="text-base font-bold">기업 제안 배정 관리</h2>
+      <p className="mt-1.5 text-sm leading-6 text-[#475569]">
+        배정 <strong className="tabular-nums text-[#16A34A]">{assigned.length}</strong>팀 ·
+        미배정 <strong className="tabular-nums text-[#B45309]">{(teams?.length ?? 0) - assigned.length}</strong>팀 ·
+        아직 팀이 없는 제안 <strong className="tabular-nums text-[#B45309]">{withoutTeam.length}</strong>건.
+        배정은 각 제안 글을 열어서 합니다.
+      </p>
+
+      <div className="mt-4">
+        <Button
+          variant="secondary"
+          icon={<Download size={15} />}
+          disabled={teams === null}
+          onClick={() => downloadCsv(toAssignmentCsv(proposals, teams ?? []), assignmentFileName())}
+        >
+          제안·팀 배정 내려받기
+        </Button>
+      </div>
+
+      <p className="mt-3 text-xs leading-5 text-[#94A3B8]">
+        파일에는 기업명·제안제목·지원마감·팀번호·팀명·프로젝트아이템·팀장·팀원수·팀원이 들어갑니다.
+        팀이 배정되지 않은 제안과 어느 제안에도 붙지 않은 팀도 함께 담깁니다. CSV 형식이라 엑셀에서 그대로 열립니다.
       </p>
 
       {note && <Notice tone="error" className="mt-3" onDismiss={() => setNote(null)}>{note}</Notice>}
@@ -542,6 +595,10 @@ export function BoardListPage({ board }: { board: BoardId }) {
 
       {board === "team" && viewer.staff && data?.board === "team" && (
         <RosterTools teams={data.items} onChanged={() => loaders.team().then(setData).catch(() => undefined)} />
+      )}
+
+      {board === "proposal" && viewer.staff && data?.board === "proposal" && (
+        <ProposalTools proposals={data.items} />
       )}
 
       {error && <Notice tone="error" className="mb-4" onDismiss={() => setError(null)}>{error}</Notice>}

@@ -596,13 +596,14 @@ export async function deleteProposal(id: string) {
 
 // ---------------------------------------------------------------- 확정 팀
 
-const TEAM_COLUMNS = "id, leader_id, team_name, project_item, members, status, team_no, confirmed_at, created_at";
+const TEAM_COLUMNS = "id, leader_id, team_name, project_item, members, status, team_no, confirmed_at, proposal_id, created_at";
 
 const toTeam = (row: RecruitRow, names: Map<string, string>, counts: Map<string, number>): CourseTeam => {
   const leaderId = (row.leader_id as string | null) ?? null;
   return {
     id: row.id as string,
     teamNo: (row.team_no as number | null) ?? null,
+    proposalId: (row.proposal_id as string | null) ?? null,
     confirmedAt: (row.confirmed_at as string | null) ?? null,
     leaderId,
     leaderName: (leaderId && names.get(leaderId)) || UNKNOWN_AUTHOR,
@@ -707,6 +708,20 @@ export async function confirmTeam(id: string): Promise<number> {
 
 export async function unconfirmTeam(id: string) {
   const { error } = await requireClient().rpc("unconfirm_team", { target: id });
+  if (error) throw error;
+}
+
+/**
+ * 기업 제안에 팀을 배정합니다. `null`이면 배정을 뗍니다.
+ *
+ * 운영진만 할 수 있고, 그 경계는 028의 트리거입니다 — 화면에서 버튼을 감추는 것과 별개로
+ * 미확정 팀의 팀장은 자기 팀 행을 고칠 수 있기 때문입니다.
+ */
+export async function assignTeamProposal(teamId: string, proposalId: string | null) {
+  const { error } = await requireClient()
+    .from("team_registrations")
+    .update({ proposal_id: proposalId, updated_at: new Date().toISOString() })
+    .eq("id", teamId);
   if (error) throw error;
 }
 

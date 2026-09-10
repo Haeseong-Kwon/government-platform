@@ -19,6 +19,7 @@ import {
   Users,
 } from "lucide-react";
 import {
+  assignTeamProposal,
   deleteDeliverable,
   deleteNotice,
   deleteProposal,
@@ -37,6 +38,7 @@ import {
   getRecruitPost,
   getSemesterProfileById,
   getTeam,
+  getTeams,
   confirmTeam,
   setNoticePinned,
   setQuestionAnswered,
@@ -70,7 +72,7 @@ import {
 import { AuthorLabel, CourseShell, StaffBadge, useStaffIds, useViewer } from "./CourseChrome";
 import { DeliverableForm, NoticeForm, ProposalForm, QuestionForm, RecruitForm, TeamForm } from "./forms";
 import { CommentThread } from "./CommentThread";
-import { Button, EmptyState, Notice, Skeleton, StatusBadge, focusRing } from "@/features/startup-workspace/ui";
+import { Button, EmptyState, Notice, Skeleton, StatusBadge, focusRing, selectClass } from "@/features/startup-workspace/ui";
 import { toMessage } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 
@@ -297,7 +299,9 @@ export function BoardDetailPage({ board, id }: { board: BoardId; id: string }) {
         {entry.board === "qna" && <QuestionDetail question={entry.item} staffIds={staffIds} />}
         {entry.board === "intro" && <IntroDetail profile={entry.item} />}
         {entry.board === "recruit" && <RecruitDetail post={entry.item} staffIds={staffIds} />}
-        {entry.board === "proposal" && <ProposalDetail proposal={entry.item} files={entry.files} />}
+        {entry.board === "proposal" && (
+          <ProposalDetail proposal={entry.item} files={entry.files} canAssign={viewer.staff} />
+        )}
         {entry.board === "team" && <TeamDetail team={entry.item} deliverables={entry.deliverables} staffIds={staffIds} />}
         {entry.board === "showcase" && <ShowcaseDetail deliverable={entry.item} files={entry.files} />}
 
@@ -628,7 +632,104 @@ function RecruitDetail({ post, staffIds }: { post: RecruitPost; staffIds: Set<st
   );
 }
 
-function ProposalDetail({ proposal, files }: { proposal: Proposal; files: CourseFile[] }) {
+/**
+ * 이 제안을 맡은 팀.
+ *
+ * 배정은 운영진의 결정이라 학생에게는 결과만 보입니다. 실제 경계는 028의 트리거이고
+ * 여기서 버튼을 감추는 것은 안내입니다.
+ *
+ * 한 팀은 한 제안만 맡습니다(028). 그래서 고를 수 있는 팀은 아직 아무 데도 붙지 않은
+ * 팀뿐이고, 다른 제안에 붙은 팀을 데려오려면 그쪽에서 먼저 떼야 합니다 — 두 제안의
+ * 명단이 한 화면에서 동시에 바뀌면 무엇이 바뀌었는지 알 수 없습니다.
+ */
+function ProposalAssignment({ proposalId, canAssign }: { proposalId: string; canAssign: boolean }) {
+  const [teams, setTeams] = useState<CourseTeam[] | null>(null);
+  const [picked, setPicked] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // 배정을 바꾼 뒤 목록을 다시 받습니다. 화면에서 팀을 옮겨 붙이면 다른 제안의 선택지도 함께 달라집니다.
+  const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => {
+    let mounted = true;
+    getTeams()
+      .then((rows) => { if (mounted) setTeams(rows); })
+      .catch((reason) => { if (mounted) setError(toMessage(reason, "팀 목록을 불러오지 못했습니다.")); });
+    return () => { mounted = false; };
+  }, [reloadKey]);
+
+  const change = async (teamId: string, next: string | null) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await assignTeamProposal(teamId, next);
+      setPicked("");
+      setReloadKey((current) => current + 1);
+    } catch (reason) {
+      setError(toMessage(reason, "배정을 바꾸지 못했습니다."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const assigned = (teams ?? []).filter((team) => team.proposalId === proposalId);
+  const selectable = (teams ?? []).filter((team) => team.proposalId === null);
+
+  return (
+    <Section title={`맡은 팀 ${assigned.length}팀`}>
+      {assigned.length === 0 ? (
+        <p className="text-sm leading-6 text-[#94A3B8]">
+          아직 배정된 팀이 없습니다. 참여하고 싶다면 아래 댓글로 신청해 주세요.
+        </p>
+      ) : (
+        <ul className="space-y-2">
+          {assigned.map((team) => (
+            <li
+              key={team.id}
+              className="flex flex-wrap items-center gap-2 rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-2.5"
+            >
+              {team.teamNo !== null && <StatusBadge tone="blue">{team.teamNo}팀</StatusBadge>}
+              <Link href={courseHref("team", team.id)} className={cn("text-sm font-bold hover:underline", focusRing)}>
+                {team.teamName}
+              </Link>
+              <span className="min-w-0 flex-1 truncate text-xs text-[#64748B]">{team.projectItem}</span>
+              {canAssign && (
+                <Button variant="ghost" size="sm" loading={busy} onClick={() => void change(team.id, null)}>
+                  배정 해제
+                </Button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {canAssign && (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <select
+            value={picked}
+            onChange={(event) => setPicked(event.target.value)}
+            className={cn(selectClass, "w-auto min-w-56")}
+            disabled={teams === null || selectable.length === 0}
+          >
+            <option value="">{selectable.length === 0 ? "배정할 수 있는 팀이 없습니다" : "팀 선택"}</option>
+            {selectable.map((team) => (
+              <option key={team.id} value={team.id}>
+                {team.teamNo === null ? team.teamName : `${team.teamNo}팀 · ${team.teamName}`}
+              </option>
+            ))}
+          </select>
+          <Button size="sm" loading={busy} disabled={!picked} onClick={() => void change(picked, proposalId)}>
+            이 제안에 배정
+          </Button>
+        </div>
+      )}
+
+      {error && <Notice tone="error" className="mt-3" onDismiss={() => setError(null)}>{error}</Notice>}
+    </Section>
+  );
+}
+
+function ProposalDetail({ proposal, files, canAssign }: { proposal: Proposal; files: CourseFile[]; canAssign: boolean }) {
   const deadline = getProposalDeadline(proposal.deadline);
   return (
     <>
@@ -648,6 +749,8 @@ function ProposalDetail({ proposal, files }: { proposal: Proposal; files: Course
 
       <div className="mt-8 space-y-8">
         <Section title="제안 내용"><Body text={proposal.content} /></Section>
+
+        <ProposalAssignment proposalId={proposal.id} canAssign={canAssign} />
 
         {proposal.categories.length > 0 && (
           <Section title="분야">

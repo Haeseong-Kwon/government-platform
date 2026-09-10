@@ -324,6 +324,8 @@ export interface CourseTeam {
   id: string;
   /** 확정할 때 붙는 번호. 미확정이면 null입니다. */
   teamNo: number | null;
+  /** 배정된 기업 제안. 운영진만 붙이고 뗍니다(028). 자체 아이템 팀은 null입니다. */
+  proposalId: string | null;
   confirmedAt: string | null;
   leaderId: string | null;
   leaderName: string;
@@ -691,10 +693,12 @@ const csvCell = (value: string) => `"${value.replace(/"/g, '""')}"`;
  * 엑셀 전용 형식(.xlsx) 대신 CSV로 냅니다 — 라이브러리를 하나 더 들이지 않고도
  * 엑셀이 그대로 엽니다. 다만 **BOM이 없으면 한글이 깨지므로** 파일을 만들 때 붙입니다.
  */
+const byTeamNo = (a: CourseTeam, b: CourseTeam) => (a.teamNo ?? 0) - (b.teamNo ?? 0);
+
 export function toRosterCsv(teams: CourseTeam[]): string {
   const rows: string[][] = [[...ROSTER_HEADERS]];
 
-  for (const team of [...teams].sort((a, b) => (a.teamNo ?? 0) - (b.teamNo ?? 0))) {
+  for (const team of [...teams].sort(byTeamNo)) {
     // 팀원이 없으면 팀 줄이라도 남깁니다. 빈 팀이 명단에서 통째로 사라지면
     // 교수님이 누락을 알아챌 방법이 없습니다.
     const members = team.members.length > 0 ? team.members : [{ name: "", role: "", major: "", studentId: "", isLeader: false }];
@@ -716,6 +720,67 @@ export function toRosterCsv(teams: CourseTeam[]): string {
 
 export const rosterFileName = (semester = COURSE) =>
   `${semester.year}-${semester.term}학기_${semester.track}_팀명단.csv`;
+
+// ---------------------------------------------------------------- 배정 내보내기
+
+/** 배정 파일의 열. 제안 한 건 + 팀 한 팀이 한 줄입니다. */
+const ASSIGNMENT_HEADERS = [
+  "기업명", "제안제목", "지원마감", "팀번호", "팀명", "프로젝트아이템", "팀장", "팀원수", "팀원",
+] as const;
+
+/** 배정도 미배정도 한눈에 보이도록, 빈 칸에 이 말을 적습니다. */
+const NO_TEAM = "(배정된 팀 없음)";
+const NO_PROPOSAL = "(미배정 팀)";
+
+/** 명단의 팀장은 계정(leader_id)이 아니라 비고란에 팀장이라 적힌 사람입니다. */
+const leaderNameOf = (team: CourseTeam) =>
+  team.members.find((member) => member.isLeader)?.name || team.leaderName;
+
+const teamCells = (team: CourseTeam): string[] => [
+  team.teamNo === null ? "" : String(team.teamNo),
+  team.teamName,
+  team.projectItem,
+  leaderNameOf(team),
+  String(team.members.length),
+  team.members.map((member) => member.name).filter(Boolean).join(", "),
+];
+
+/**
+ * 기업 제안과 배정된 팀을 한 표로 폅니다.
+ *
+ * 배정된 팀이 없는 제안도, 어느 제안에도 붙지 않은 팀도 줄을 남깁니다 —
+ * 양쪽 다 교수님이 학기 중에 찾아내야 하는 구멍이라, 파일에서 빠지면 볼 방법이 없습니다.
+ *
+ * 팀 명단(`toRosterCsv`)과 달리 팀원 한 명이 아니라 한 팀이 한 줄입니다.
+ * 이 파일로 답하는 질문이 "이 프로젝트를 어느 팀이 맡았나"이기 때문입니다.
+ */
+export function toAssignmentCsv(proposals: Proposal[], teams: CourseTeam[]): string {
+  const rows: string[][] = [[...ASSIGNMENT_HEADERS]];
+
+  const sortedProposals = [...proposals].sort(
+    (a, b) => a.companyName.localeCompare(b.companyName, "ko") || a.title.localeCompare(b.title, "ko"),
+  );
+
+  for (const proposal of sortedProposals) {
+    const assigned = teams.filter((team) => team.proposalId === proposal.id).sort(byTeamNo);
+    const head = [proposal.companyName, proposal.title, proposal.deadline ?? ""];
+    if (assigned.length === 0) {
+      rows.push([...head, "", NO_TEAM, "", "", "", ""]);
+      continue;
+    }
+    for (const team of assigned) rows.push([...head, ...teamCells(team)]);
+  }
+
+  // 지워진 제안에 붙어 있던 팀(proposal_id가 남아 있어도 제안이 없는 경우)도 여기로 모입니다.
+  const known = new Set(proposals.map((proposal) => proposal.id));
+  const unassigned = teams.filter((team) => team.proposalId === null || !known.has(team.proposalId)).sort(byTeamNo);
+  for (const team of unassigned) rows.push([NO_PROPOSAL, "", "", ...teamCells(team)]);
+
+  return rows.map((row) => row.map(csvCell).join(",")).join("\r\n");
+}
+
+export const assignmentFileName = (semester = COURSE) =>
+  `${semester.year}-${semester.term}학기_${semester.track}_기업제안_팀배정.csv`;
 
 // ---------------------------------------------------------------- 입력 검증
 

@@ -3,6 +3,8 @@ import {
   BOARDS,
   BOARD_ORDER,
   COURSE,
+  assignmentFileName,
+  toAssignmentCsv,
   MAX_ATTACHMENT_BYTES,
   checkAttachment,
   countOpenRoles,
@@ -69,6 +71,16 @@ const proposal = (over: Partial<Proposal>): Proposal => ({
   createdAt: "2026-08-01T00:00:00Z",
   commentCount: 0,
   ...over,
+});
+
+const member = (over: Partial<TeamMember> = {}): TeamMember => ({
+  name: "김하나", role: "백엔드", major: "컴퓨터학부", studentId: "2021001", isLeader: false, ...over,
+});
+
+const team = (over: Partial<CourseTeam>): CourseTeam => ({
+  id: "t1", teamNo: 1, proposalId: null, confirmedAt: "2026-09-01T00:00:00Z", leaderId: "u1", leaderName: "김하나",
+  teamName: "오르카랩스", projectItem: "중고거래 앱", members: [member({ isLeader: true })],
+  status: "Activities", createdAt: "2026-09-01T00:00:00Z", commentCount: 0, ...over,
 });
 
 const deliverable = (over: Partial<Deliverable>): Deliverable => ({
@@ -262,15 +274,6 @@ describe("목록 정렬", () => {
 });
 
 describe("팀 명단 파일", () => {
-  const member = (over: Partial<TeamMember> = {}): TeamMember => ({
-    name: "김하나", role: "백엔드", major: "컴퓨터학부", studentId: "2021001", isLeader: false, ...over,
-  });
-  const team = (over: Partial<CourseTeam>): CourseTeam => ({
-    id: "t1", teamNo: 1, confirmedAt: "2026-09-01T00:00:00Z", leaderId: "u1", leaderName: "김하나",
-    teamName: "오르카랩스", projectItem: "중고거래 앱", members: [member({ isLeader: true })],
-    status: "Activities", createdAt: "2026-09-01T00:00:00Z", commentCount: 0, ...over,
-  });
-
   it("요청받은 열 순서를 지킨다", () => {
     const [header] = toRosterCsv([team({})]).split("\r\n");
     expect(header).toBe('"팀번호","팀명","팀원이름","역할","학과","학번","비고"');
@@ -299,6 +302,61 @@ describe("팀 명단 파일", () => {
     const rows = toRosterCsv([team({ members: [] })]).split("\r\n");
     expect(rows).toHaveLength(2);
     expect(rows[1]).toContain('"오르카랩스"');
+  });
+});
+
+describe("기업 제안 배정 파일", () => {
+  it("제안 한 건 + 팀 한 팀이 한 줄이다", () => {
+    const rows = toAssignmentCsv(
+      [proposal({ id: "p1", companyName: "한양테크", title: "재고 예측", deadline: "2026-10-01" })],
+      [team({ id: "t1", teamNo: 3, proposalId: "p1", members: [member({ isLeader: true }), member({ name: "박민준" })] })],
+    ).split("\r\n");
+
+    expect(rows[0]).toBe('"기업명","제안제목","지원마감","팀번호","팀명","프로젝트아이템","팀장","팀원수","팀원"');
+    expect(rows[1]).toBe('"한양테크","재고 예측","2026-10-01","3","오르카랩스","중고거래 앱","김하나","2","김하나, 박민준"');
+  });
+
+  it("팀이 배정되지 않은 제안도 줄을 남긴다", () => {
+    const rows = toAssignmentCsv([proposal({ id: "p1" })], []).split("\r\n");
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toContain('"(배정된 팀 없음)"');
+  });
+
+  it("어느 제안에도 붙지 않은 팀을 뒤에 모은다", () => {
+    const rows = toAssignmentCsv(
+      [proposal({ id: "p1" })],
+      [team({ id: "t1", proposalId: "p1" }), team({ id: "t2", teamNo: 2, teamName: "미배정팀", proposalId: null })],
+    ).split("\r\n");
+
+    expect(rows.at(-1)).toContain('"미배정팀"');
+    expect(rows.at(-1)?.startsWith('"(미배정 팀)"')).toBe(true);
+  });
+
+  it("지워진 제안에 붙어 있던 팀도 미배정으로 본다", () => {
+    // 제안이 지워지면 배정만 풀리지만(028), 화면이 그 사이 목록을 들고 있을 수 있습니다.
+    const rows = toAssignmentCsv([proposal({ id: "p1" })], [team({ id: "t1", proposalId: "사라진제안" })]).split("\r\n");
+    expect(rows.at(-1)?.startsWith('"(미배정 팀)"')).toBe(true);
+  });
+
+  it("한 제안에 배정된 팀은 팀번호 순이다", () => {
+    const csv = toAssignmentCsv(
+      [proposal({ id: "p1" })],
+      [
+        team({ id: "b", teamNo: 2, teamName: "나중", proposalId: "p1" }),
+        team({ id: "a", teamNo: 1, teamName: "먼저", proposalId: "p1" }),
+      ],
+    );
+    expect(csv.indexOf("먼저")).toBeLessThan(csv.indexOf("나중"));
+  });
+
+  it("원본 배열을 건드리지 않는다", () => {
+    const teams = [team({ id: "b", teamNo: 2, proposalId: "p1" }), team({ id: "a", teamNo: 1, proposalId: "p1" })];
+    toAssignmentCsv([proposal({ id: "p1" })], teams);
+    expect(teams.map((item) => item.id)).toEqual(["b", "a"]);
+  });
+
+  it("파일 이름이 학기와 과목을 담고 csv로 끝난다", () => {
+    expect(assignmentFileName()).toBe(`${COURSE.year}-${COURSE.term}학기_${COURSE.track}_기업제안_팀배정.csv`);
   });
 });
 
