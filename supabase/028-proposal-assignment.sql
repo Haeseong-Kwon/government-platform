@@ -52,3 +52,7 @@ DROP TRIGGER IF EXISTS team_registrations_guard_proposal ON team_registrations;
 CREATE TRIGGER team_registrations_guard_proposal
   BEFORE INSERT OR UPDATE ON team_registrations
   FOR EACH ROW EXECUTE FUNCTION guard_proposal_assignment();
+
+-- PostgREST는 스키마를 캐시해 둡니다. 이 신호가 없으면 열을 추가해도 API는 예전 스키마를
+-- 계속 봐서 "column team_registrations.proposal_id does not exist"가 그대로 납니다.
+NOTIFY pgrst, 'reload schema';
